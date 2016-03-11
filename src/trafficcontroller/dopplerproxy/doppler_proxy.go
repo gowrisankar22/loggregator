@@ -89,7 +89,7 @@ func (proxy *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	default:
 		writer.Header().Set("WWW-Authenticate", "Basic")
 		writer.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(writer, "Resource Not Found. %s", request.URL.Path)
+		fmt.Fprintf(writer, "Resource Not Found.")
 	}
 }
 
@@ -138,7 +138,7 @@ func (proxy *Proxy) serveAppLogs(writer http.ResponseWriter, request *http.Reque
 	if len(matches) != 3 {
 		writer.Header().Set("WWW-Authenticate", "Basic")
 		writer.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(writer, "Resource Not Found. %s", request.URL.Path)
+		fmt.Fprintf(writer, "Resource Not Found.")
 		return
 	}
 	appId := matches[1]

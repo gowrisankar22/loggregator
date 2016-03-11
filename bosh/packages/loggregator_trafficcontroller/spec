@@ -3,19 +3,6 @@ name: loggregator_trafficcontroller
 dependencies:
 - golang1.4
 files:
-- loggregator/src/trafficcontroller/*.go # gosub
-- loggregator/src/trafficcontroller/authorization/*.go # gosub
-- loggregator/src/trafficcontroller/channel_group_connector/*.go # gosub
-- loggregator/src/trafficcontroller/doppler_endpoint/*.go # gosub
-- loggregator/src/trafficcontroller/dopplerproxy/*.go # gosub
-- loggregator/src/trafficcontroller/integration_test/*.go # gosub
-- loggregator/src/trafficcontroller/integration_test/fake_auth_server/*.go # gosub
-- loggregator/src/trafficcontroller/integration_test/fake_doppler/*.go # gosub
-- loggregator/src/trafficcontroller/integration_test/fake_uaa_server/*.go # gosub
-- loggregator/src/trafficcontroller/listener/*.go # gosub
-- loggregator/src/trafficcontroller/marshaller/*.go # gosub
-- loggregator/src/trafficcontroller/serveraddressprovider/*.go # gosub
-- loggregator/src/trafficcontroller/uaa_client/*.go # gosub
 - loggregator/src/github.com/apcera/nats/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/dropsonde/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/dropsonde/control/*.go # gosub
@@ -37,6 +24,7 @@ files:
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/cfcomponent/instrumentation/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/cfcomponent/registrars/collectorregistrar/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/cfcomponent/registrars/routerregistrar/*.go # gosub
+- loggregator/src/github.com/cloudfoundry/loggregatorlib/loggertesthelper/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/logmessage/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/server/*.go # gosub
 - loggregator/src/github.com/cloudfoundry/loggregatorlib/server/handlers/*.go # gosub
@@ -51,4 +39,16 @@ files:
 - loggregator/src/github.com/gorilla/websocket/*.go # gosub
 - loggregator/src/github.com/nu7hatch/gouuid/*.go # gosub
 - loggregator/src/github.com/pivotal-golang/localip/*.go # gosub
-- loggregator/src/github.com/cloudfoundry/loggregatorlib/loggertesthelper/*.go # gosub
+- loggregator/src/trafficcontroller/*.go # gosub
+- loggregator/src/trafficcontroller/authorization/*.go # gosub
+- loggregator/src/trafficcontroller/channel_group_connector/*.go # gosub
+- loggregator/src/trafficcontroller/doppler_endpoint/*.go # gosub
+- loggregator/src/trafficcontroller/dopplerproxy/*.go # gosub
+- loggregator/src/trafficcontroller/integration_test/*.go # gosub
+- loggregator/src/trafficcontroller/integration_test/fake_auth_server/*.go # gosub
+- loggregator/src/trafficcontroller/integration_test/fake_doppler/*.go # gosub
+- loggregator/src/trafficcontroller/integration_test/fake_uaa_server/*.go # gosub
+- loggregator/src/trafficcontroller/listener/*.go # gosub
+- loggregator/src/trafficcontroller/marshaller/*.go # gosub
+- loggregator/src/trafficcontroller/serveraddressprovider/*.go # gosub
+- loggregator/src/trafficcontroller/uaa_client/*.go # gosub
