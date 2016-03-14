@@ -69,7 +69,7 @@ func (proxy *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	if err != nil {
 		proxy.logger.Errorf("DopplerProxy.ServeHTTP: unable to translate request: %s", err.Error())
 		writer.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(writer, "Resource Not Found.")
+		fmt.Fprint(writer, "Resource Not Found.")
 		return
 	}
 
@@ -89,7 +89,7 @@ func (proxy *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	default:
 		writer.Header().Set("WWW-Authenticate", "Basic")
 		writer.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(writer, "Resource Not Found.")
+		fmt.Fprint(writer, "Resource Not Found.")
 	}
 }
 
