@@ -12,7 +12,8 @@ import (
 	"time"
 	"trafficcontroller/marshaller"
 
-	"github.com/cloudfoundry/loggregatorlib/logmessage"
+	"github.com/cloudfoundry/sonde-go/events"
+	"github.com/gogo/protobuf/proto"
 	"github.com/gorilla/websocket"
 
 	"github.com/cloudfoundry/loggregatorlib/loggertesthelper"
@@ -45,7 +46,7 @@ var _ = Describe("WebsocketListener", func() {
 
 	JustBeforeEach(func() {
 		l = listener.NewWebsocket(
-			marshaller.LoggregatorLogMessage,
+			marshaller.DropsondeLogMessage,
 			converter,
 			readTimeout,
 			handshakeTimeout,
@@ -205,9 +206,11 @@ var _ = Describe("WebsocketListener", func() {
 				var msgData []byte
 				Eventually(outputChan).Should(Receive(&msgData))
 
-				msg, _ := logmessage.ParseMessage(msgData)
-				Expect(msg.GetLogMessage().GetSourceName()).To(Equal("LGR"))
-				Expect(string(msg.GetLogMessage().GetMessage())).To(Equal("WebsocketListener.Start: Timed out listening to a doppler server after 500ms"))
+				var envelope events.Envelope
+				err := proto.Unmarshal(msgData, &envelope)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(envelope.GetLogMessage().GetSourceType()).To(Equal("DOP"))
+				Expect(string(envelope.GetLogMessage().GetMessage())).To(Equal("WebsocketListener.Start: Timed out listening to a doppler server after 500ms"))
 				close(done)
 			})
 		})
@@ -215,7 +218,7 @@ var _ = Describe("WebsocketListener", func() {
 		Context("without a read timeout", func() {
 			It("waits for messages to come in", func() {
 				converter := func(d []byte) ([]byte, error) { return d, nil }
-				l = listener.NewWebsocket(marshaller.LoggregatorLogMessage, converter, 0, handshakeTimeout, loggertesthelper.Logger())
+				l = listener.NewWebsocket(marshaller.DropsondeLogMessage, converter, 0, handshakeTimeout, loggertesthelper.Logger())
 
 				go l.Start(fmt.Sprintf("ws://%s", ts.Listener.Addr()), "myApp", outputChan, stopChan)
 
@@ -232,7 +235,7 @@ var _ = Describe("WebsocketListener", func() {
 
 			It("responds to stopChan closure in a reasonable time", func(done Done) {
 				converter := func(d []byte) ([]byte, error) { return d, nil }
-				l = listener.NewWebsocket(marshaller.LoggregatorLogMessage, converter, 0, handshakeTimeout, loggertesthelper.Logger())
+				l = listener.NewWebsocket(marshaller.DropsondeLogMessage, converter, 0, handshakeTimeout, loggertesthelper.Logger())
 
 				go func() {
 					l.Start(fmt.Sprintf("ws://%s", ts.Listener.Addr()), "myApp", outputChan, stopChan)
@@ -253,9 +256,11 @@ var _ = Describe("WebsocketListener", func() {
 
 		It("should send an error message to the channel", func(done Done) {
 			msgData := <-outputChan
-			msg, _ := logmessage.ParseMessage(msgData)
-			Expect(msg.GetLogMessage().GetSourceName()).To(Equal("LGR"))
-			Expect(string(msg.GetLogMessage().GetMessage())).To(Equal("WebsocketListener.Start: Error connecting to a doppler server"))
+			var envelope events.Envelope
+			err := proto.Unmarshal(msgData, &envelope)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(envelope.GetLogMessage().GetSourceType()).To(Equal("DOP"))
+			Expect(envelope.GetLogMessage().GetMessage()).To(BeEquivalentTo("WebsocketListener.Start: Error connecting to a doppler server"))
 			close(done)
 		})
 	})
@@ -287,7 +292,7 @@ var _ = Describe("WebsocketListener", func() {
 				// we needed to create a local listerer to avoid a data race since this
 				// go routine can not be cleaned up
 				localListener = listener.NewWebsocket(
-					marshaller.LoggregatorLogMessage,
+					marshaller.DropsondeLogMessage,
 					converter,
 					readTimeout,
 					0,

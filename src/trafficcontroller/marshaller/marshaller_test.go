@@ -3,29 +3,15 @@ package marshaller_test
 import (
 	"trafficcontroller/marshaller"
 
+	"time"
+
 	"github.com/cloudfoundry/dropsonde/envelope_extensions"
-	"github.com/cloudfoundry/loggregatorlib/logmessage"
 	"github.com/cloudfoundry/sonde-go/events"
 	"github.com/gogo/protobuf/proto"
-	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
-
-var _ = Describe("LoggregatorLogMessage", func() {
-	It("unmarshals as a loggregator LogMessage", func() {
-		msg := marshaller.LoggregatorLogMessage("hello", "abc123")
-
-		logMessage := &logmessage.LogMessage{}
-		err := proto.Unmarshal(msg, logMessage)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(logMessage.GetMessage()).To(BeEquivalentTo("hello"))
-		Expect(logMessage.GetAppId()).To(Equal("abc123"))
-		Expect(time.Unix(0, logMessage.GetTimestamp())).To(BeTemporally("~", time.Now(), time.Second))
-	})
-})
 
 var _ = Describe("DropsondeLogMessage", func() {
 	It("unmarshals as a dropsonde envelope containing a log message", func() {
