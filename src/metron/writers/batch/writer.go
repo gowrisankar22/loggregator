@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	maxOverflowTries  = 5
+	maxOverflowTries  = 1
 	minBufferCapacity = 1024
 )
 
@@ -82,7 +83,8 @@ func NewWriter(protocol string, writer BatchChainByteWriter, droppedCounter Drop
 	batchTimer := time.NewTimer(time.Second)
 	batchTimer.Stop()
 	batchWriter := &Writer{
-		flushDuration:  flushDuration,
+		// flushDuration:  flushDuration,
+		flushDuration:  10 * time.Minute, // don't commit this, but try and take timed flushing out of the equation while spiking
 		outWriter:      writer,
 		droppedCounter: droppedCounter,
 		msgBuffer:      newMessageBuffer(make([]byte, 0, bufferCapacity)),
@@ -102,15 +104,28 @@ func (w *Writer) Write(msgBytes []byte, chainers ...metricbatcher.BatchCounterCh
 
 	prefixedBytes := prefixMessage(msgBytes)
 	switch {
+	// we want to be able to continue to service incomming messages received on UDP
+	// so empty the buffer at the same time the message is sent such that there is space for new messages
 	case w.msgBuffer.Len()+len(prefixedBytes) > w.msgBuffer.Cap():
-		_, err := w.retryWrites(prefixedBytes)
+		count := w.msgBuffer.messages + 1 // don't forget the message we're trying to write now
+		allMsgs, err := ioutil.ReadAll(w.msgBuffer)
 		if err != nil {
-			dropped := w.msgBuffer.messages + 1
-			w.droppedCounter.Drop(uint32(dropped))
-			w.msgBuffer.Reset()
-			w.timer.Reset(w.flushDuration)
 			return 0, err
 		}
+
+		allMsgs = append(allMsgs, prefixedBytes...)
+
+		w.msgBuffer.Reset()
+		chainers := w.chainers
+		w.chainers = nil
+
+		go func() {
+			_, retryErr := w.retryWrites(allMsgs, count, chainers...)
+			if retryErr != nil {
+				w.droppedCounter.Drop(uint32(count))
+				fmt.Sprintf("dropped: %d messages", count)
+			}
+		}()
 		return len(msgBytes), nil
 	default:
 		if w.msgBuffer.Len() == 0 {
@@ -127,28 +142,22 @@ func (w *Writer) Stop() {
 	w.timer.Stop()
 }
 
-func (w *Writer) flushWrite(bytes []byte) (int, error) {
+func (w *Writer) flushWrite(toWrite []byte, messageCount uint64, chainers ...metricbatcher.BatchCounterChainer) (int, error) {
 	w.writerLock.Lock()
 	defer w.writerLock.Unlock()
 
-	toWrite := make([]byte, 0, w.msgBuffer.Len()+len(bytes))
-	toWrite = append(toWrite, w.msgBuffer.Bytes()...)
-	toWrite = append(toWrite, bytes...)
-
-	bufferMessageCount := w.msgBuffer.messages
-	if len(bytes) > 0 {
-		bufferMessageCount++
-	}
-	sent, err := w.outWriter.Write(toWrite, w.chainers...)
+	println("Writing")
+	sent, err := w.outWriter.Write(toWrite, chainers...)
 	if err != nil {
-		w.logger.Warnf("Received error while trying to flush TCP bytes: %s", err)
-		return 0, err
+		println("Got error", err.Error())
+		panic(err)
+		//w.logger.Warnf("Received error while trying to flush TCP bytes: %s", err)
+		//return 0, err
 	}
+	println("Successfully wrote")
 
-	metrics.BatchAddCounter("DopplerForwarder.sentMessages", bufferMessageCount)
-	metrics.BatchAddCounter(w.protocol+".sentMessageCount", bufferMessageCount)
-	w.msgBuffer.Reset()
-	w.chainers = nil
+	metrics.BatchAddCounter("DopplerForwarder.sentMessages", messageCount)
+	metrics.BatchAddCounter(w.protocol+".sentMessageCount", messageCount)
 	return sent, nil
 }
 
@@ -164,18 +173,27 @@ func (w *Writer) flushBuffer() {
 	if w.msgBuffer.Len() == 0 {
 		return
 	}
-	if _, err := w.flushWrite(nil); err != nil {
+	count := w.msgBuffer.messages
+	messages, err := ioutil.ReadAll(w.msgBuffer)
+	if err != nil {
+		return
+	}
+	if _, err := w.flushWrite(messages, count, w.chainers...); err != nil {
 		metrics.BatchIncrementCounter("DopplerForwarder.retryCount")
 		w.timer.Reset(w.flushDuration)
+		w.msgBuffer.Write(messages)
+		return
 	}
+	w.msgBuffer.Reset()
+	w.chainers = nil
 }
 
-func (w *Writer) retryWrites(message []byte) (sent int, err error) {
+func (w *Writer) retryWrites(message []byte, messageCount uint64, chainers ...metricbatcher.BatchCounterChainer) (sent int, err error) {
 	for i := 0; i < maxOverflowTries; i++ {
 		if i > 0 {
 			metrics.BatchIncrementCounter("DopplerForwarder.retryCount")
 		}
-		sent, err = w.flushWrite(message)
+		sent, err = w.flushWrite(message, messageCount, chainers...)
 		if err == nil {
 			return sent, nil
 		}
@@ -184,11 +202,7 @@ func (w *Writer) retryWrites(message []byte) (sent int, err error) {
 }
 
 func prefixMessage(msgBytes []byte) []byte {
-	buffer := bytes.NewBuffer(make([]byte, 0, len(msgBytes)*2))
-	err := binary.Write(buffer, binary.LittleEndian, uint32(len(msgBytes)))
-	if err != nil {
-		panic(err)
-	}
-	_, err = buffer.Write(msgBytes)
-	return buffer.Bytes()
+	prefixed := make([]byte, 4, len(msgBytes)+4)
+	binary.LittleEndian.PutUint32(prefixed, uint32(len(msgBytes)))
+	return append(prefixed, msgBytes...)
 }

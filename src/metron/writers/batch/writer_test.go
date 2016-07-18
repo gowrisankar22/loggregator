@@ -20,7 +20,7 @@ import (
 
 var bufferSize uint64
 
-var _ = Describe("Batch Writer", func() {
+var _ = FDescribe("Batch Writer", func() {
 
 	var (
 		byteWriter      *mockBatchChainByteWriter
@@ -97,7 +97,7 @@ var _ = Describe("Batch Writer", func() {
 			bytesWritten, err := batcher.Write(messageBytes)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(bytesWritten).To(Equal(len(messageBytes)))
-			Expect(byteWriter.WriteInput.Message).To(Receive(Equal(prefixedMessage)))
+			Eventually(byteWriter.WriteInput.Message).Should(Receive(Equal(prefixedMessage)))
 		})
 
 		It("sends a sentMessages metric", func() {
@@ -181,9 +181,7 @@ var _ = Describe("Batch Writer", func() {
 			})
 
 			It("increments the dropped message counter", func() {
-				bytesWritten, err := batcher.Write(messageBytes)
-				Expect(err).To(HaveOccurred())
-				Expect(bytesWritten).To(BeEquivalentTo(0))
+				batcher.Write(messageBytes)
 
 				Eventually(droppedCounter.DropInput.Count).Should(Receive(BeNumerically("==", 1)))
 				Consistently(func() uint64 { return sender.GetCounter("DopplerForwarder.sentMessages") }).Should(BeEquivalentTo(0))
@@ -211,6 +209,20 @@ var _ = Describe("Batch Writer", func() {
 			Expect(byteWriter.WriteCalled).To(HaveLen(0))
 		})
 
+		It("buffers messages while flushing", func() {
+			defer close(byteWriter.WriteOutput.SentLength)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, err := batcher.Write(messageBytes)
+				Expect(err).ToNot(HaveOccurred())
+				_, err = batcher.Write(messageBytes)
+				Expect(err).ToNot(HaveOccurred())
+			}()
+			Eventually(done).Should(BeClosed())
+		})
+
 		It("flushes multiple messages within buffer when exceeding capacity", func() {
 			close(byteWriter.WriteOutput.SentLength)
 			_, err := batcher.Write(messageBytes)
@@ -218,7 +230,7 @@ var _ = Describe("Batch Writer", func() {
 
 			_, err = batcher.Write(messageBytes)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(byteWriter.WriteInput.Message).To(Receive(Equal(twoMessageOutput)))
+			Eventually(byteWriter.WriteInput.Message).Should(Receive(Equal(twoMessageOutput)))
 			Consistently(byteWriter.WriteInput.Message).ShouldNot(Receive())
 		})
 
@@ -231,6 +243,7 @@ var _ = Describe("Batch Writer", func() {
 			_, err := batcher.Write(messageBytes, chainers[0])
 			Expect(err).ToNot(HaveOccurred())
 			_, err = batcher.Write(messageBytes, chainers[1])
+			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(byteWriter.WriteInput).Should(BeCalled(
 				With(twoMessageOutput, chainers),
@@ -244,7 +257,7 @@ var _ = Describe("Batch Writer", func() {
 
 			_, err = batcher.Write(messageBytes)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(byteWriter.WriteInput.Message).To(Receive(Equal(twoMessageOutput)))
+			Eventually(byteWriter.WriteInput.Message).Should(Receive(Equal(twoMessageOutput)))
 
 			_, err = batcher.Write(messageBytes)
 			Expect(err).ToNot(HaveOccurred())
@@ -261,9 +274,7 @@ var _ = Describe("Batch Writer", func() {
 			})
 
 			It("retries", func() {
-				bytesWritten, err := batcher.Write(messageBytes)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(bytesWritten).To(BeEquivalentTo(len(messageBytes)))
+				batcher.Write(messageBytes)
 
 				Eventually(byteWriter.WriteInput.Message).Should(Receive(Equal(prefixedMessage)))
 				Consistently(byteWriter.WriteInput.Message, 0.4).ShouldNot(Receive())
@@ -297,7 +308,7 @@ var _ = Describe("Batch Writer", func() {
 				_, err := batcher.Write(messageBytes)
 				Expect(err).ToNot(HaveOccurred())
 				_, err = batcher.Write(messageBytes)
-				Expect(err).To(HaveOccurred())
+				Expect(err).ToNot(HaveOccurred())
 
 				Eventually(droppedCounter.DropInput.Count).Should(BeCalled(With(uint32(2))))
 
