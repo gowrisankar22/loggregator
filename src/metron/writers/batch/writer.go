@@ -1,10 +1,8 @@
 package batch
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
 	"sync"
 	"time"
 
@@ -14,37 +12,30 @@ import (
 )
 
 const (
-	maxOverflowTries  = 1
+	maxOverflowTries  = 5
 	minBufferCapacity = 1024
 )
 
 type messageBuffer struct {
-	bytes.Buffer
+	buffer   []byte
 	messages uint64
 }
 
 func newMessageBuffer(bufferBytes []byte) *messageBuffer {
-	child := bytes.NewBuffer(bufferBytes)
 	return &messageBuffer{
-		Buffer: *child,
+		buffer: bufferBytes,
 	}
 }
 
 // Write writes msg to b and increments b.messages.
-func (b *messageBuffer) Write(msg []byte) (int, error) {
+func (b *messageBuffer) Write(msg []byte) {
 	b.messages++
-	return b.Buffer.Write(msg)
-}
-
-// writeNonMessage is provided as a method to write bytes without
-// incrementing b.messages.
-func (b *messageBuffer) writeNonMessage(msg []byte) (int, error) {
-	return b.Buffer.Write(msg)
+	b.buffer = append(b.buffer, msg...)
 }
 
 func (b *messageBuffer) Reset() {
 	b.messages = 0
-	b.Buffer.Reset()
+	b.buffer = b.buffer[:0]
 }
 
 //go:generate hel --type BatchChainByteWriter --output mock_byte_writer_test.go
@@ -62,9 +53,9 @@ type DroppedMessageCounter interface {
 type Writer struct {
 	flushDuration  time.Duration
 	outWriter      BatchChainByteWriter
-	writerLock     sync.Mutex
 	msgBuffer      *messageBuffer
 	msgBufferLock  sync.Mutex
+	flushing       sync.WaitGroup
 	timer          *time.Timer
 	logger         *gosteno.Logger
 	droppedCounter DroppedMessageCounter
@@ -83,8 +74,7 @@ func NewWriter(protocol string, writer BatchChainByteWriter, droppedCounter Drop
 	batchTimer := time.NewTimer(time.Second)
 	batchTimer.Stop()
 	batchWriter := &Writer{
-		// flushDuration:  flushDuration,
-		flushDuration:  10 * time.Minute, // don't commit this, but try and take timed flushing out of the equation while spiking
+		flushDuration:  flushDuration,
 		outWriter:      writer,
 		droppedCounter: droppedCounter,
 		msgBuffer:      newMessageBuffer(make([]byte, 0, bufferCapacity)),
@@ -104,35 +94,32 @@ func (w *Writer) Write(msgBytes []byte, chainers ...metricbatcher.BatchCounterCh
 
 	prefixedBytes := prefixMessage(msgBytes)
 	switch {
-	// we want to be able to continue to service incomming messages received on UDP
-	// so empty the buffer at the same time the message is sent such that there is space for new messages
-	case w.msgBuffer.Len()+len(prefixedBytes) > w.msgBuffer.Cap():
+	case len(w.msgBuffer.buffer)+len(prefixedBytes) > cap(w.msgBuffer.buffer):
 		count := w.msgBuffer.messages + 1 // don't forget the message we're trying to write now
-		allMsgs, err := ioutil.ReadAll(w.msgBuffer)
-		if err != nil {
-			return 0, err
-		}
-
+		allMsgs := make([]byte, len(w.msgBuffer.buffer), len(w.msgBuffer.buffer)+len(prefixedBytes))
+		copy(allMsgs, w.msgBuffer.buffer)
 		allMsgs = append(allMsgs, prefixedBytes...)
+		chainers := w.chainers
 
 		w.msgBuffer.Reset()
-		chainers := w.chainers
 		w.chainers = nil
 
+		// The batch writer should not block the calling context during a flush -
+		// it should continue to accept messages into its newly-empty buffer, so
+		// kick off the flush in a goroutine
 		go func() {
 			_, retryErr := w.retryWrites(allMsgs, count, chainers...)
 			if retryErr != nil {
 				w.droppedCounter.Drop(uint32(count))
-				fmt.Sprintf("dropped: %d messages", count)
 			}
 		}()
 		return len(msgBytes), nil
 	default:
-		if w.msgBuffer.Len() == 0 {
+		if w.msgBuffer.messages == 0 {
 			w.timer.Reset(w.flushDuration)
 		}
-		_, err := w.msgBuffer.Write(prefixedBytes)
-		return len(msgBytes), err
+		w.msgBuffer.Write(prefixedBytes)
+		return len(msgBytes), nil
 	}
 }
 
@@ -140,21 +127,15 @@ func (w *Writer) Stop() {
 	w.msgBufferLock.Lock()
 	defer w.msgBufferLock.Unlock()
 	w.timer.Stop()
+	w.flushing.Wait()
 }
 
 func (w *Writer) flushWrite(toWrite []byte, messageCount uint64, chainers ...metricbatcher.BatchCounterChainer) (int, error) {
-	w.writerLock.Lock()
-	defer w.writerLock.Unlock()
-
-	println("Writing")
 	sent, err := w.outWriter.Write(toWrite, chainers...)
 	if err != nil {
-		println("Got error", err.Error())
-		panic(err)
-		//w.logger.Warnf("Received error while trying to flush TCP bytes: %s", err)
-		//return 0, err
+		w.logger.Warnf("Received error while trying to flush TCP bytes: %s", err)
+		return 0, err
 	}
-	println("Successfully wrote")
 
 	metrics.BatchAddCounter("DopplerForwarder.sentMessages", messageCount)
 	metrics.BatchAddCounter(w.protocol+".sentMessageCount", messageCount)
@@ -170,18 +151,17 @@ func (w *Writer) flushOnTimer() {
 func (w *Writer) flushBuffer() {
 	w.msgBufferLock.Lock()
 	defer w.msgBufferLock.Unlock()
-	if w.msgBuffer.Len() == 0 {
+	w.flushing.Add(1)
+	defer w.flushing.Done()
+	if w.msgBuffer.messages == 0 {
 		return
 	}
 	count := w.msgBuffer.messages
-	messages, err := ioutil.ReadAll(w.msgBuffer)
-	if err != nil {
-		return
-	}
+	messages := make([]byte, len(w.msgBuffer.buffer))
+	copy(messages, w.msgBuffer.buffer)
 	if _, err := w.flushWrite(messages, count, w.chainers...); err != nil {
 		metrics.BatchIncrementCounter("DopplerForwarder.retryCount")
 		w.timer.Reset(w.flushDuration)
-		w.msgBuffer.Write(messages)
 		return
 	}
 	w.msgBuffer.Reset()
@@ -189,6 +169,8 @@ func (w *Writer) flushBuffer() {
 }
 
 func (w *Writer) retryWrites(message []byte, messageCount uint64, chainers ...metricbatcher.BatchCounterChainer) (sent int, err error) {
+	w.flushing.Add(1)
+	defer w.flushing.Done()
 	for i := 0; i < maxOverflowTries; i++ {
 		if i > 0 {
 			metrics.BatchIncrementCounter("DopplerForwarder.retryCount")

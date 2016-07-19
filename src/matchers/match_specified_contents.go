@@ -21,7 +21,6 @@ type specifiedContentsMatcher struct {
 }
 
 func (matcher *specifiedContentsMatcher) Match(actual interface{}) (bool, error) {
-	fmt.Printf("got envelope: %v", actual)
 	if _, ok := actual.(*events.Envelope); !ok {
 		return false, fmt.Errorf("MatchSpecifiedContents matcher expects actual to be an *events.Envelope")
 	}

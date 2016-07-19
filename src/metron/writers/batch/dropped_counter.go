@@ -2,7 +2,7 @@ package batch
 
 import (
 	"fmt"
-	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,11 +18,12 @@ type BatchCounterIncrementer interface {
 }
 
 type DroppedCounter struct {
-	origin       string
-	totalDropped int64
-	writer       BatchChainByteWriter
-	incrementer  BatchCounterIncrementer
-	timer        *time.Timer
+	origin         string
+	totalDropped   int64
+	writer         BatchChainByteWriter
+	incrementer    BatchCounterIncrementer
+	timer          *time.Timer
+	timerResetLock sync.Mutex
 }
 
 func NewDroppedCounter(byteWriter BatchChainByteWriter, incrementer BatchCounterIncrementer, origin string) *DroppedCounter {
@@ -38,7 +39,11 @@ func NewDroppedCounter(byteWriter BatchChainByteWriter, incrementer BatchCounter
 }
 
 func (d *DroppedCounter) Drop(n uint32) {
-	defer d.timer.Reset(time.Millisecond)
+	defer func() {
+		d.timerResetLock.Lock()
+		defer d.timerResetLock.Unlock()
+		d.timer.Reset(time.Millisecond)
+	}()
 	atomic.AddInt64(&d.totalDropped, int64(n))
 }
 
@@ -61,6 +66,8 @@ func (d *DroppedCounter) sendDroppedMessages() {
 	bytes := append(d.droppedCounterBytes(droppedCount), d.droppedLogBytes(droppedCount)...)
 	if _, err := d.writer.Write(bytes); err != nil {
 		d.incrementer.BatchIncrementCounter("droppedCounter.sendErrors")
+		d.timerResetLock.Lock()
+		defer d.timerResetLock.Unlock()
 		d.timer.Reset(time.Millisecond)
 		return
 	}
@@ -102,7 +109,6 @@ func (d *DroppedCounter) droppedLogBytes(droppedCount int64) []byte {
 
 	bytes, err := message.Marshal()
 	if err != nil {
-		log.Printf("Failed to marshal thingimajigger: %s", err)
 		d.incrementer.BatchIncrementCounter("droppedCounter.sendErrors")
 		d.timer.Reset(time.Millisecond)
 		return nil

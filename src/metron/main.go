@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"runtime"
 	"time"
 
 	"metron/clientpool"
@@ -22,7 +23,6 @@ import (
 
 	"logger"
 	"metron/eventwriter"
-	"runtime"
 
 	"github.com/cloudfoundry/dropsonde/metric_sender"
 	"github.com/cloudfoundry/dropsonde/metricbatcher"

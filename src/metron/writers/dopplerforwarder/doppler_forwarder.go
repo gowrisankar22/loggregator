@@ -2,6 +2,7 @@ package dopplerforwarder
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/cloudfoundry/dropsonde/metricbatcher"
 	"github.com/cloudfoundry/gosteno"
@@ -24,6 +25,7 @@ type DopplerForwarder struct {
 	writing        chan struct{}
 	networkWrapper NetworkWrapper
 	clientPool     ClientPool
+	tryLock        tryLock
 	logger         *gosteno.Logger
 }
 
@@ -32,22 +34,17 @@ func New(wrapper NetworkWrapper, clientPool ClientPool, logger *gosteno.Logger) 
 		writing:        make(chan struct{}, 1),
 		networkWrapper: wrapper,
 		clientPool:     clientPool,
+		tryLock:        newTryLock(),
 		logger:         logger,
 	}
 }
 
 func (d *DopplerForwarder) Write(message []byte, chainers ...metricbatcher.BatchCounterChainer) (int, error) {
-	select {
-	case d.writing <- struct{}{}:
-		println("DopplerForwarder got lock")
-	default:
-		println("DopplerForwarder in use")
-		return 0, errors.New("In use")
+	if err := d.tryLock.Lock(); err != nil {
+		return 0, fmt.Errorf("DopplerForwarder: Failed to write: %s", err)
 	}
-	defer func() {
-		println("DopplerForwarder unlocking")
-		<-d.writing
-	}()
+	defer d.tryLock.Unlock()
+
 	client, err := d.clientPool.RandomClient()
 	if err != nil {
 		d.logger.Errord(map[string]interface{}{
@@ -65,4 +62,23 @@ func (d *DopplerForwarder) Write(message []byte, chainers ...metricbatcher.Batch
 		return 0, err
 	}
 	return len(message), nil
+}
+
+type tryLock chan struct{}
+
+func newTryLock() tryLock {
+	return make(tryLock, 1)
+}
+
+func (t tryLock) Lock() error {
+	select {
+	case t <- struct{}{}:
+		return nil
+	default:
+		return errors.New("Lock in use")
+	}
+}
+
+func (t tryLock) Unlock() {
+	<-t
 }

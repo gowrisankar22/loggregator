@@ -20,7 +20,7 @@ import (
 
 var bufferSize uint64
 
-var _ = FDescribe("Batch Writer", func() {
+var _ = Describe("Batch Writer", func() {
 
 	var (
 		byteWriter      *mockBatchChainByteWriter
@@ -219,6 +219,14 @@ var _ = FDescribe("Batch Writer", func() {
 				Expect(err).ToNot(HaveOccurred())
 				_, err = batcher.Write(messageBytes)
 				Expect(err).ToNot(HaveOccurred())
+				Eventually(byteWriter.WriteCalled).Should(BeCalled())
+
+				By("Writing to the writer even when the writer is already in use")
+				_, err = batcher.Write(messageBytes)
+				Expect(err).ToNot(HaveOccurred())
+				_, err = batcher.Write(messageBytes)
+				Expect(err).ToNot(HaveOccurred())
+				Eventually(byteWriter.WriteCalled).Should(BeCalled())
 			}()
 			Eventually(done).Should(BeClosed())
 		})
@@ -261,7 +269,7 @@ var _ = FDescribe("Batch Writer", func() {
 
 			_, err = batcher.Write(messageBytes)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(byteWriter.WriteInput.Message).To(HaveLen(0))
+			Consistently(byteWriter.WriteInput.Message).Should(HaveLen(0))
 		})
 
 		Context("the weighted writer errors once", func() {

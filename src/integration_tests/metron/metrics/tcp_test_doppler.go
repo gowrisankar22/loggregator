@@ -3,7 +3,6 @@ package metrics
 import (
 	"encoding/binary"
 	"net"
-	"time"
 
 	"github.com/cloudfoundry/sonde-go/events"
 	"github.com/gogo/protobuf/proto"
@@ -32,7 +31,7 @@ func (d *TCPTestDoppler) Start() {
 		if err != nil {
 			return
 		}
-		d.readFromConn(conn)
+		go d.readFromConn(conn)
 	}
 }
 
@@ -42,15 +41,11 @@ func (d *TCPTestDoppler) Stop() {
 
 func (d *TCPTestDoppler) readFromConn(conn net.Conn) {
 	for {
-		println("Reading in test doppler")
 		var size uint32
 		err := binary.Read(conn, binary.LittleEndian, &size)
 		if err != nil {
 			return
 		}
-
-		// slow down reading after peeking at the size
-		time.Sleep(500 * time.Millisecond)
 
 		buff := make([]byte, size)
 		readCount, err := conn.Read(buff)
@@ -62,6 +57,5 @@ func (d *TCPTestDoppler) readFromConn(conn net.Conn) {
 			return
 		}
 		d.MessageChan <- &env
-		println("Sent information on doppler channel")
 	}
 }
